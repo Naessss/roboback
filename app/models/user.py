@@ -1,6 +1,8 @@
 from sqlalchemy import Column, Integer, String, DateTime
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 from app.database.connection import Base
+from app.models.inquiry import Inquiry
 
 class User(Base):
     __tablename__ = "users"
@@ -11,3 +13,5 @@ class User(Base):
     username = Column(String(50), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now()) 
+
+    inquiries = relationship("Inquiry", back_populates="user", cascade="all, delete")
