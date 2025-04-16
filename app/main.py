@@ -1,9 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import auth, upload, inquirycreate, inquiry
+from fastapi.staticfiles import StaticFiles
 
 
 app = FastAPI(title="Robo Backend API")
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # CORS 설정
 app.add_middleware(
