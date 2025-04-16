@@ -14,7 +14,8 @@ load_dotenv()
 
 # SQLAlchemy 모델 임포트
 from app.models.user import Base
-from app.models.inquiry import Inquiry 
+from app.models.inquiry import Inquiry
+from app.models.detection import Detection
 from app.database.connection import SQLALCHEMY_DATABASE_URL
 
 # this is the Alembic Config object, which provides

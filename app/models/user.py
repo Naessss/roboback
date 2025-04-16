@@ -12,6 +12,7 @@ class User(Base):
     password = Column(String(255), nullable=False)
     username = Column(String(50), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now()) 
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     inquiries = relationship("Inquiry", back_populates="user", cascade="all, delete")
+    detections = relationship("Detection", back_populates="user")

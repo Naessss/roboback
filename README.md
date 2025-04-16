@@ -15,6 +15,7 @@ robo_db라는 이름으로 데이터베이스 생성
 ```
 DATABASE_URL=mysql+pymysql://root:1234@localhost:3306/robo_db
 SECRET_KEY=1234567890
+ROBOFLOW_API_KEY=로보플로우 api키
 ```
 
 ### 데이터베이스 마이그레이션 적용

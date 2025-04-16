@@ -7,9 +7,13 @@ from datetime import datetime
 from app.utils.auth import get_current_user
 from app.models.user import User
 from typing import Annotated
+from app.utils.robo_workflow import detect_cardamage
+import base64
+from sqlalchemy.orm import Session
+from app.database.connection import get_db
+from app.models.detection import Detection
 
 router = APIRouter()
-
 # 업로드된 이미지를 저장할 기본 디렉토리
 UPLOAD_DIR = "uploads"
 
@@ -23,68 +27,90 @@ def create_date_folder():
     date_folder = os.path.join(UPLOAD_DIR, year, month, day)
     os.makedirs(date_folder, exist_ok=True)
     return date_folder
-
-@router.post("/images")
-async def upload_images(
+    
+@router.post("/detect")
+async def detect(
     current_user: Annotated[User, Depends(get_current_user)],
     front: Optional[UploadFile] = File(None),
     leftSide: Optional[UploadFile] = File(None),
     rightSide: Optional[UploadFile] = File(None),
-    back: Optional[UploadFile] = File(None)
-):
-    try:
-        # 날짜별 폴더 생성
-        date_folder = create_date_folder()
+    back: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db)
+): 
+    if not any([front, leftSide, rightSide, back]):
+        raise HTTPException(status_code=400, detail="At least one image is required")
+    
+    # 탐지 세트 ID 생성
+    detection_set_id = str(uuid.uuid4())
+    
+    # 날짜별 폴더 생성
+    date_folder = create_date_folder()
+    results = []
+    
+    # 각 이미지 처리
+    for image, position in [(front, "front"), (leftSide, "leftSide"), (rightSide, "rightSide"), (back, "back")]:
+        if not image:
+            continue
+            
+        print(f"Processing {position} image: {image.filename}")
+        print(f"Content type: {image.content_type}")
         
-        uploaded_files = {
-            "front": None,
-            "leftSide": None,
-            "rightSide": None,
-            "back": None
+        # 임시 파일로 저장
+        temp_path = os.path.join(date_folder, f"temp_{position}_{image.filename}")
+        with open(temp_path, "wb") as buffer:
+            content = await image.read()
+            buffer.write(content)
+        
+        result = detect_cardamage(temp_path)
+        
+        # 임시 파일 삭제
+        os.remove(temp_path)
+        
+        if result and len(result) > 0:
+            detection_result = result[0]
+            
+            # base64 이미지를 파일로 저장
+            base64_image = detection_result["output_image"].split(",")[1] if "," in detection_result["output_image"] else detection_result["output_image"]
+            image_data = base64.b64decode(base64_image)
+            
+            # UUID를 사용하여 고유한 파일명 생성
+            output_filename = f"{position}_{uuid.uuid4()}.jpg"
+            output_path = os.path.join(date_folder, output_filename)
+            
+            # 이미지 파일 저장
+            with open(output_path, "wb") as f:
+                f.write(image_data)
+            
+            # DB에 저장
+            detection = Detection(
+                user_id=current_user.id,
+                detection_set_id=detection_set_id,
+                position=position,
+                image_path=output_path,
+                detected_at=datetime.utcnow()
+            )
+            db.add(detection)
+            db.commit()
+            db.refresh(detection)
+            
+            # 원본 결과에서 output_image를 저장된 파일 경로로 대체
+            detection_result["output_image"] = output_path
+            detection_result["position"] = position
+            detection_result["detection_id"] = detection.id
+            detection_result["detection_set_id"] = detection_set_id
+            
+            results.append(detection_result)
+    
+    if not results:
+        return {
+            "status": "success",
+            "message": "No damage detected in any images",
+            "data": []
         }
-        
-        # 각 이미지 처리 함수
-        async def process_image(file: Optional[UploadFile], position: str):
-            if file:
-                if not file.content_type.startswith('image/'):
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"{position} 이미지는 이미지 파일이어야 합니다."
-                    )
-                
-                file_extension = os.path.splitext(file.filename)[1]
-                unique_filename = f"{uuid.uuid4()}{file_extension}"
-                file_path = os.path.join(date_folder, unique_filename)
-                
-                with open(file_path, "wb") as buffer:
-                    content = await file.read()
-                    buffer.write(content)
-                
-                return {
-                    "original_filename": file.filename,
-                    "saved_filename": unique_filename,
-                    "file_path": file_path,
-                    "content_type": file.content_type,
-                    "size": len(content)
-                }
-            return None
-        
-        # 각 위치별 이미지 처리
-        uploaded_files["front"] = await process_image(front, "정면")
-        uploaded_files["leftSide"] = await process_image(leftSide, "왼쪽")
-        uploaded_files["rightSide"] = await process_image(rightSide, "오른쪽")
-        uploaded_files["back"] = await process_image(back, "후면")
-        
-        return JSONResponse(
-            status_code=200,
-            content={
-                "message": "이미지 업로드 성공",
-                "uploaded_files": uploaded_files
-            }
-        )
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"이미지 업로드 중 오류 발생: {str(e)}"
-        ) 
+    
+    return {
+        "status": "success",
+        "message": "Damage detection completed",
+        "detection_set_id": detection_set_id,
+        "data": results
+    }
