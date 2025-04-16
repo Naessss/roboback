@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse
-from typing import Optional
+from typing import Optional, List
 import os
 import uuid
 from datetime import datetime
@@ -12,6 +12,7 @@ import base64
 from sqlalchemy.orm import Session
 from app.database.connection import get_db
 from app.models.detection import Detection
+from sqlalchemy import func, distinct
 
 router = APIRouter()
 # 업로드된 이미지를 저장할 기본 디렉토리
@@ -113,4 +114,81 @@ async def detect(
         "message": "Damage detection completed",
         "detection_set_id": detection_set_id,
         "data": results
+    }
+
+@router.get("/history")
+async def get_detection_history(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Session = Depends(get_db)
+):
+    # 전체 감지 내역 조회
+    subquery = db.query(
+        Detection.detection_set_id,
+        func.max(Detection.detected_at).label('max_detected_at')
+    ).filter(
+        Detection.user_id == current_user.id
+    ).group_by(
+        Detection.detection_set_id
+    ).subquery()
+
+    detections = db.query(
+        Detection.detection_set_id,
+        Detection.detected_at
+    ).join(
+        subquery,
+        (Detection.detection_set_id == subquery.c.detection_set_id) &
+        (Detection.detected_at == subquery.c.max_detected_at)
+    ).order_by(
+        Detection.detected_at.desc()
+    ).all()
+    
+    history = [
+        {
+            "detection_set_id": detection.detection_set_id,
+            "detected_at": detection.detected_at.strftime("%Y-%m-%d %H:%M:%S")
+        }
+        for detection in detections
+    ]
+    
+    return {
+        "status": "success",
+        "data": history
+    }
+
+@router.get("/history/{detection_set_id}")
+async def get_detection_details(
+    detection_set_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Session = Depends(get_db)
+):
+    # 특정 detection_set_id의 이미지 정보 조회
+    detections = db.query(
+        Detection.position,
+        Detection.image_path
+    ).filter(
+        Detection.user_id == current_user.id,
+        Detection.detection_set_id == detection_set_id
+    ).order_by(
+        Detection.position
+    ).all()
+    
+    if not detections:
+        raise HTTPException(
+            status_code=404,
+            detail="해당 감지 내역을 찾을 수 없습니다."
+        )
+    
+    # 결과 형식 변환
+    images = [
+        {
+            "position": detection.position,
+            "image_path": detection.image_path
+        }
+        for detection in detections
+    ]
+    
+    return {
+        "status": "success",
+        "detection_set_id": detection_set_id,
+        "data": images
     }
